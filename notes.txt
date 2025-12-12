@@ -1,0 +1,6 @@
+12/11/25 
+Race Condition - There is a book and if two people try to write the entry for same person in the book at the same time then the value will not match like person writting A has to give 50 to c and other person has to write A has to give 20 to C lets say A already has 100 then both person will think A has 100 and the final entry says that A is left with 80 after paying both B and C which is not correct this is called *RACE CONDITION*.
+-> This can be solved using locking [sync.Mutex] where first person to write will lock while writing so if other guy tries to write they will be blocked and will be allowed only when the first one is done updating. 
+
+RPC - Remote Procedural Call 
+Client and Server are different programs and to maintain a common variable between then RPC is used which uses pointers that are address to that variable. Denoted by "&". 
