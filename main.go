@@ -1,9 +1,11 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"net"
 	"net/rpc"
+	"strings"
 	"sync"
 )
 
@@ -59,17 +61,38 @@ func (b *Bank) Get(user string, balance *int) error {
 }
 
 func main() {
+	//parse command line arguments
+	portPtr := flag.String("port", "8001", "Port to listen on")
+	idPtr := flag.Int("id", 0, "My Node ID (0,1,2,...)")
+	peersPtr := flag.String("peers", "localhost:8001,localhost:8002,localhost:8003", "Comma-separated list of peer addresses")
+	flag.Parse()
+
+	peers := strings.Split(*peersPtr, ",")
+
 	bank := new(Bank)
 	bank.accounts = make(map[string]int)
 
-	rpc.Register(bank)
+	//initialize paxos
+	px := MakePaxosPeer(*idPtr, peers)
 
-	listener, err := net.Listen("tcp", ":1234")
+	//register both bank and paxos RPCs
+	rpc.Register(bank)
+	rpc.Register(px)
+
+	listener, err := net.Listen("tcp", ":"+*portPtr)
 	if err != nil {
 		fmt.Println("Listener error:", err)
 		return
 	}
-	fmt.Println("Server listening on port 1234")
+	fmt.Printf("Node %d listening on port %s", *idPtr, *portPtr)
+
+	//If i am the node 0 , i will try to be the leader (for testing only)
+	if *idPtr == 0 {
+		go func() {
+			fmt.Println("Node 0 trying to be leader by sending Prepare to all peers")
+			px.RunPaxos(nil)
+		}()
+	}
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
