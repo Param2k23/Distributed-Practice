@@ -35,13 +35,24 @@ type PxosPeer struct {
 }
 
 func MakePaxosPeer(me int, peers []string) *PxosPeer {
-	return &PxosPeer{
+	// return &PxosPeer{
+	// 	me:           me,
+	// 	minProposal:  -1,
+	// 	peers:        peers, // Initialize with provided peer list
+	// 	acceptedProp: -1,
+	// 	acceptedVal:  nil,
+	// }
+	px := &PxosPeer{
 		me:           me,
-		minProposal:  -1,
-		peers:        peers, // Initialize with provided peer list
-		acceptedProp: -1,
+		peers:        peers,
+		minProposal:  0,
+		acceptedProp: 0,
 		acceptedVal:  nil,
 	}
+	px.readPersist()
+	rpc.Register(px)
+	return px
+
 }
 
 func (px *PxosPeer) Prepare(args *PrepareArgs, reply *PrepareReply) error {
@@ -51,6 +62,7 @@ func (px *PxosPeer) Prepare(args *PrepareArgs, reply *PrepareReply) error {
 	fmt.Printf("[Paxos %d] Received Prepare with ProposalNumber %d from Node %d\n", px.me, args.ProposalNumber, args.NodeID)
 	if args.ProposalNumber > px.minProposal {
 		px.minProposal = args.ProposalNumber
+		px.persist()
 		reply.Promise = true
 		fmt.Printf("[Paxos %d] Promised for ProposalNumber %d\n", px.me, args.ProposalNumber)
 	} else {
@@ -89,6 +101,7 @@ func (px *PxosPeer) Accept(args *AcceptArgs, reply *AcceptReply) error {
 		//Accept the value
 		px.acceptedProp = args.ProposalNumber
 		px.acceptedVal = args.Value
+		px.persist()
 
 		fmt.Printf("[Node %d] Accepted proposal %d with value %v\n", px.me, args.ProposalNumber, args.Value)
 
