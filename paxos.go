@@ -16,18 +16,31 @@ type PrepareReply struct {
 	HighestSeen int
 }
 
+type AcceptArgs struct {
+	ProposalNumber int
+	Value          interface{}
+}
+
+type AcceptReply struct {
+	MinProposal int // If rejected, tell the leader why (highest number seen)
+}
+
 type PxosPeer struct {
-	mu          sync.Mutex
-	me          int
-	minProposal int
-	peers       []string // List of peer addresses
+	mu           sync.Mutex
+	me           int
+	minProposal  int
+	peers        []string    // List of peer addresses
+	acceptedProp int         // Accepted proposal number
+	acceptedVal  interface{} // Accepted value
 }
 
 func MakePaxosPeer(me int, peers []string) *PxosPeer {
 	return &PxosPeer{
-		me:          me,
-		minProposal: -1,
-		peers:       peers, // Initialize with provided peer list
+		me:           me,
+		minProposal:  -1,
+		peers:        peers, // Initialize with provided peer list
+		acceptedProp: -1,
+		acceptedVal:  nil,
 	}
 }
 
@@ -66,6 +79,40 @@ func (px *PxosPeer) SendPrepare(serverAddress string, args *PrepareArgs, reply *
 	return true
 }
 
+func (px *PxosPeer) Accept(args *AcceptArgs, reply *AcceptReply) error {
+	px.mu.Lock()
+	defer px.mu.Unlock()
+
+	if args.ProposalNumber >= px.minProposal {
+		px.minProposal = args.ProposalNumber
+
+		//Accept the value
+		px.acceptedProp = args.ProposalNumber
+		px.acceptedVal = args.Value
+
+		fmt.Printf("[Node %d] Accepted proposal %d with value %v\n", px.me, args.ProposalNumber, args.Value)
+
+	} else {
+		fmt.Printf("[Node %d] Rejected accept for proposal %d, highest seen is %d\n", px.me, args.ProposalNumber, px.minProposal)
+	}
+	reply.MinProposal = px.minProposal
+	return nil
+}
+
+func (px *PxosPeer) SendAccept(serverAddress string, args *AcceptArgs, reply *AcceptReply) bool {
+	client, err := rpc.Dial("tcp", serverAddress)
+	if err != nil {
+		return false
+	}
+	defer client.Close()
+	err = client.Call("PxosPeer.Accept", args, reply)
+	if err != nil {
+		fmt.Printf("[Paxos %d] RPC call to %s failed: %v\n", px.me, serverAddress, err)
+		return false
+	}
+	return true
+}
+
 func (px *PxosPeer) RunPaxos(value interface{}) {
 	currentProposalNumber := px.minProposal + 1
 	for {
@@ -95,8 +142,36 @@ func (px *PxosPeer) RunPaxos(value interface{}) {
 		if promisesReceived > len(px.peers)/2 {
 			fmt.Printf("WON THE ELECTION!! Proceeding to Accept Phase...")
 			//(Next steps : Send Accept)
-			return
+			acceptArgs := &AcceptArgs{
+				ProposalNumber: currentProposalNumber,
+				Value:          value,
+			}
+			acceptedCount := 0
+			fmt.Printf("   -> Sending Accept(%d) to peers...\n", currentProposalNumber)
+			for _, peerAddr := range px.peers {
+				var reply AcceptReply
+				ok := px.SendAccept(peerAddr, acceptArgs, &reply)
+				// --- DEBUGGING LOGS ---
+				if !ok {
+					fmt.Printf("      [X] Node %s unreachable (RPC Failed)\n", peerAddr)
+				} else {
+					fmt.Printf("      [?] Node %s replied. MyProp: %d, Their MinProp: %d\n",
+						peerAddr, currentProposalNumber, reply.MinProposal)
+
+					// The Check
+					if reply.MinProposal == currentProposalNumber {
+						acceptedCount++
+						fmt.Printf("      [OK] Vote Counted!\n")
+					} else {
+						fmt.Printf("      [FAIL] Vote Ignored (Mismatch)\n")
+					}
+				}
+				// ---------------------
+				if acceptedCount > len(px.peers)/2 {
+					fmt.Printf("CONSENSUS REACHED! Value %v accepted.\n", value)
+					return // <--- THIS STOPS THE LOOP
+				}
+			}
 		}
-		fmt.Printf("Failes to get quorom, Retrying.....")
 	}
 }

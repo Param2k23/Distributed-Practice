@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/gob"
 	"flag"
 	"fmt"
 	"net"
@@ -12,6 +13,7 @@ import (
 type Bank struct {
 	mu       sync.Mutex
 	accounts map[string]int
+	paxos    *PxosPeer
 }
 
 type TransferArgs struct {
@@ -40,15 +42,18 @@ func (b *Bank) Transfer(args *TransferArgs, reply *bool) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	if b.accounts[args.From] < args.Amount {
-		return fmt.Errorf("insufficient funds in %s's account", args.From)
-	}
+	fmt.Printf("Request Received: %s sends $%d to %s\n", args.From, args.Amount, args.To)
+	b.paxos.RunPaxos(args)
 
-	//Move Money
-	b.accounts[args.From] -= args.Amount
-	b.accounts[args.To] += args.Amount
-	fmt.Printf("[Server] Transferred %d from %s to %s\n", args.Amount, args.From, args.To)
-	*reply = true
+	if b.accounts[args.From] >= args.Amount {
+		b.accounts[args.From] -= args.Amount
+		b.accounts[args.To] += args.Amount
+		*reply = true
+		fmt.Printf("[Server] Transferred $%d from %s to %s\n", args.Amount, args.From, args.To)
+	} else {
+		*reply = false
+		fmt.Printf("[Server] Transfer failed: Insufficient funds in %s\n", args.From)
+	}
 	return nil
 }
 
@@ -61,6 +66,8 @@ func (b *Bank) Get(user string, balance *int) error {
 }
 
 func main() {
+	//register gob types
+	gob.Register(TransferArgs{})
 	//parse command line arguments
 	portPtr := flag.String("port", "8001", "Port to listen on")
 	idPtr := flag.Int("id", 0, "My Node ID (0,1,2,...)")
@@ -69,11 +76,13 @@ func main() {
 
 	peers := strings.Split(*peersPtr, ",")
 
-	bank := new(Bank)
-	bank.accounts = make(map[string]int)
-
 	//initialize paxos
 	px := MakePaxosPeer(*idPtr, peers)
+
+	bank := &Bank{
+		accounts: make(map[string]int),
+		paxos:    px,
+	}
 
 	//register both bank and paxos RPCs
 	rpc.Register(bank)
@@ -86,13 +95,6 @@ func main() {
 	}
 	fmt.Printf("Node %d listening on port %s", *idPtr, *portPtr)
 
-	//If i am the node 0 , i will try to be the leader (for testing only)
-	if *idPtr == 0 {
-		go func() {
-			fmt.Println("Node 0 trying to be leader by sending Prepare to all peers")
-			px.RunPaxos(nil)
-		}()
-	}
 	for {
 		conn, err := listener.Accept()
 		if err != nil {

@@ -18,7 +18,7 @@ type TransferArgs struct {
 }
 
 func main() {
-	client, err := rpc.Dial("tcp", "localhost:1234")
+	client, err := rpc.Dial("tcp", "localhost:8001")
 	if err != nil {
 		fmt.Println("Dialing error:", err)
 		return
