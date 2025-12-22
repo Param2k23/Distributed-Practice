@@ -10,6 +10,12 @@ type LockManager struct {
 	locks map[string]*sync.Mutex
 }
 
+func MakeLockManager() *LockManager {
+	return &LockManager{
+		locks: make(map[string]*sync.Mutex),
+	}
+}
+
 func (lm *LockManager) getLock(account string) *sync.Mutex {
 	lm.mu.Lock()
 	defer lm.mu.Unlock()

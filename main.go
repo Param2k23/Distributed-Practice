@@ -14,6 +14,7 @@ type Bank struct {
 	mu       sync.Mutex
 	accounts map[string]int
 	paxos    *PxosPeer
+	lockMgr  *LockManager
 }
 
 type TransferArgs struct {
@@ -39,9 +40,8 @@ func (b *Bank) Put(args *PutArgs, reply *bool) error {
 }
 
 func (b *Bank) Transfer(args *TransferArgs, reply *bool) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
+	b.lockMgr.LockKeys(args.From, args.To)
+	defer b.lockMgr.UnlockKeys(args.From, args.To)
 	fmt.Printf("Request Received: %s sends $%d to %s\n", args.From, args.Amount, args.To)
 	b.paxos.RunPaxos(args)
 
@@ -82,6 +82,7 @@ func main() {
 	bank := &Bank{
 		accounts: make(map[string]int),
 		paxos:    px,
+		lockMgr:  MakeLockManager(),
 	}
 
 	//register both bank and paxos RPCs
