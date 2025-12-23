@@ -6,6 +6,7 @@ import (
 	"net/rpc"
 )
 
+// Define the data structures used in RPC
 type PutArgs struct {
 	User   string
 	Amount int
@@ -17,45 +18,75 @@ type TransferArgs struct {
 	Amount int
 }
 
-func main() {
-	client, err := rpc.Dial("tcp", "localhost:8001")
+// Helper function to connect to a specific port and run a transaction
+func runTransaction(port string, from string, to string) {
+	fmt.Printf("\n--- Connecting to Shard Node at %s ---\n", port)
+
+	client, err := rpc.Dial("tcp", "localhost:"+port)
 	if err != nil {
-		fmt.Println("Dialing error:", err)
+		fmt.Println("❌ Connection Failed:", err)
 		return
 	}
-	fmt.Println("Client connected to server.")
-	putArgs := PutArgs{User: "Alice", Amount: 100}
+	defer client.Close()
+
+	// 1. Setup Accounts (Put)
 	var reply bool
 
+	// Create "From" Account
+	fmt.Printf("   -> Creating Account: %s ($100)\n", from)
+	putArgs := PutArgs{User: from, Amount: 100}
 	err = client.Call("Bank.Put", &putArgs, &reply)
 	if err != nil {
-		log.Fatal("Put Error", err)
-		return
+		log.Println("      Put Error:", err)
 	}
-	fmt.Println("Deposited 100 to Alice's account.")
 
-	bobArgs := PutArgs{User: "Bob", Amount: 0}
+	// Create "To" Account
+	fmt.Printf("   -> Creating Account: %s ($0)\n", to)
+	bobArgs := PutArgs{User: to, Amount: 0}
 	err = client.Call("Bank.Put", &bobArgs, &reply)
 	if err != nil {
-		log.Fatal("Put Error", err)
-		return
+		log.Println("      Put Error:", err)
 	}
-	fmt.Println("Created Bob's account with 0 balance.")
 
-	transferArgs := TransferArgs{From: "Alice", To: "Bob", Amount: 50}
-	fmt.Println("Transferring 50 from Alice to Bob...")
+	// 2. Execute Transfer
+	fmt.Printf("   -> Attempting Transfer: %s sends $50 to %s\n", from, to)
+	transferArgs := TransferArgs{From: from, To: to, Amount: 50}
+
 	err = client.Call("Bank.Transfer", &transferArgs, &reply)
 	if err != nil {
-		log.Fatal("Transfer Error", err)
+		// RPC Error
+		log.Println("      ❌ RPC Error:", err)
 		return
 	}
-	fmt.Println("Transferred 50 from Alice to Bob.")
 
-	var aliceBalance int
-	err = client.Call("Bank.Get", "Alice", &aliceBalance)
-	if err != nil {
-		log.Fatal("Get Error", err)
-		return
+	if reply {
+		fmt.Println("      ✅ Success! Transaction Committed.")
+	} else {
+		fmt.Println("      ⛔ Failed! Server rejected the transaction (Wrong Shard or Insufficient Funds).")
 	}
-	fmt.Printf("Alice's balance: %d\n", aliceBalance)
+
+	// 3. Verify Balance (Optional)
+	var balance int
+	err = client.Call("Bank.Get", from, &balance)
+	if err == nil {
+		fmt.Printf("   -> %s's New Balance: $%d\n", from, balance)
+	}
+}
+
+func main() {
+	// TEST 1: Intra-Shard Transaction on Shard 1 (A-M)
+	// Alice and Bob start with 'A' and 'B', so they belong to Shard 1.
+	// We connect to Node 0 of Shard 1 (Port 8001).
+	runTransaction("8001", "Alice", "Bob")
+
+	// TEST 2: Intra-Shard Transaction on Shard 2 (N-Z)
+	// Zelda and Xander start with 'Z' and 'X', so they belong to Shard 2.
+	// We connect to Node 0 of Shard 2 (Port 9001).
+	runTransaction("9001", "Zelda", "Xander")
+
+	// TEST 3: Invalid Shard Access (Boundary Check)
+	// We try to process "Zelda" on Shard 1 (Port 8001).
+	// This SHOULD FAIL if your isMyKey() logic is working correctly.
+	fmt.Println("\n--- TEST: Sending 'Zelda' to Shard 1 (Should Fail) ---")
+	runTransaction("8001", "Zelda", "Xander")
 }
