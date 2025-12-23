@@ -15,6 +15,7 @@ type Bank struct {
 	accounts map[string]int
 	paxos    *PxosPeer
 	lockMgr  *LockManager
+	shardID  int
 }
 
 type TransferArgs struct {
@@ -40,6 +41,12 @@ func (b *Bank) Put(args *PutArgs, reply *bool) error {
 }
 
 func (b *Bank) Transfer(args *TransferArgs, reply *bool) error {
+	if !b.isMyKey(args.From) || !b.isMyKey(args.To) {
+		fmt.Printf("Transfer failed: accounts not in same shard")
+		*reply = false
+		return nil
+	}
+
 	b.lockMgr.LockKeys(args.From, args.To)
 	defer b.lockMgr.UnlockKeys(args.From, args.To)
 	fmt.Printf("Request Received: %s sends $%d to %s\n", args.From, args.Amount, args.To)
@@ -65,10 +72,24 @@ func (b *Bank) Get(user string, balance *int) error {
 	return nil
 }
 
+func (b *Bank) isMyKey(key string) bool {
+	if key == "" {
+		return true
+	}
+	firstLetter := key[0]
+	if b.shardID == 1 {
+		return firstLetter >= 'A' && firstLetter <= 'M'
+	} else if b.shardID == 2 {
+		return firstLetter >= 'N' && firstLetter <= 'Z'
+	}
+	return false
+}
+
 func main() {
 	//register gob types
 	gob.Register(TransferArgs{})
 	//parse command line arguments
+	shardPtr := flag.Int("shard", 1, "Shard ID (1 or 2)")
 	portPtr := flag.String("port", "8001", "Port to listen on")
 	idPtr := flag.Int("id", 0, "My Node ID (0,1,2,...)")
 	peersPtr := flag.String("peers", "localhost:8001,localhost:8002,localhost:8003", "Comma-separated list of peer addresses")
@@ -83,6 +104,7 @@ func main() {
 		accounts: make(map[string]int),
 		paxos:    px,
 		lockMgr:  MakeLockManager(),
+		shardID:  *shardPtr,
 	}
 
 	//register both bank and paxos RPCs
