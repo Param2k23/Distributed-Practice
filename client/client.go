@@ -18,6 +18,45 @@ type TransferArgs struct {
 	Amount int
 }
 
+type TwoPCArgs struct {
+	User   string
+	Amount int
+}
+
+func runCrossShardTransaction(fromUser string, toUser string, amount int) {
+	fmt.Printf("\n--- Running Cross-Shard Transaction: %s sends $%d to %s ---\n", fromUser, amount, toUser)
+	shard1, err1 := rpc.Dial("tcp", "localhost:8001")
+	shard2, err2 := rpc.Dial("tcp", "localhost:9001")
+
+	if err1 != nil || err2 != nil {
+		fmt.Println("❌ Connection Failed:", err1, err2)
+		return
+	}
+	defer shard1.Close()
+	defer shard2.Close()
+
+	fmt.Println("Phase 1 : Prepare (Locking Accounts...)")
+
+	var reply1, reply2 bool
+
+	args1 := TwoPCArgs{User: fromUser, Amount: -amount}
+	shard1.Call("Bank.Prepare", &args1, &reply1)
+	args2 := TwoPCArgs{User: toUser, Amount: amount}
+	shard2.Call("Bank.Prepare", &args2, &reply2)
+
+	if reply1 && reply2 {
+		fmt.Println("Phase 2: Commit (Transferring Funds...)")
+		shard1.Call("Bank.Commit", &args1, &reply1)
+		shard2.Call("Bank.Commit", &args2, &reply2)
+		fmt.Println("✅ Success! Transaction Committed.")
+	} else {
+		fmt.Println("Phase 2: Abort (Releasing Locks...)")
+		shard1.Call("Bank.Abort", &args1, &reply1)
+		shard2.Call("Bank.Abort", &args2, &reply2)
+		fmt.Println("⛔️ Failed! Transaction Aborted.")
+	}
+}
+
 // Helper function to connect to a specific port and run a transaction
 func runTransaction(port string, from string, to string) {
 	fmt.Printf("\n--- Connecting to Shard Node at %s ---\n", port)
@@ -89,4 +128,10 @@ func main() {
 	// This SHOULD FAIL if your isMyKey() logic is working correctly.
 	fmt.Println("\n--- TEST: Sending 'Zelda' to Shard 1 (Should Fail) ---")
 	runTransaction("8001", "Zelda", "Xander")
+
+	// TEST 4: Cross-Shard Transaction
+	// Alice (Shard 1) tries to send money to Zelda (Shard 2).
+	// This is a 2PC transaction that should succeed.
+	fmt.Println("\n--- TEST: Cross-Shard Transaction (Alice sends $50 to Zelda) ---")
+	runCrossShardTransaction("Alice", "Zelda", 50)
 }
