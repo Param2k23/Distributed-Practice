@@ -10,6 +10,11 @@ import (
 	"sync"
 )
 
+type TwoPCArgs struct {
+	User   string
+	Amount int
+}
+
 type Bank struct {
 	mu       sync.Mutex
 	accounts map[string]int
@@ -85,9 +90,55 @@ func (b *Bank) isMyKey(key string) bool {
 	return false
 }
 
+func (b *Bank) Prepare(args *TwoPCArgs, reply *bool) error {
+	if !b.isMyKey(args.User) {
+		*reply = false
+		return nil
+	}
+	// Acquire lock (Do not unlock)
+	b.lockMgr.LockKeys(args.User)
+	if args.Amount < 0 {
+		//verify balance
+		currentBal := b.accounts[args.User]
+		if currentBal < -args.Amount {
+			//fail not enough money
+			b.lockMgr.UnlockKeys(args.User)
+			*reply = false
+			return nil
+		}
+	}
+
+	//if we are here we are ready
+	fmt.Printf("[2PC] Prepared %s for amount %d. Locked.\n", args.User, args.Amount)
+	*reply = true
+	return nil
+}
+
+func (b *Bank) Commit(args *TwoPCArgs, reply *bool) error {
+	if !b.isMyKey(args.User) {
+		return nil
+	}
+	b.paxos.RunPaxos(args)
+	//Execute the transaction
+	b.accounts[args.User] += args.Amount
+	fmt.Printf("[2PC] Committed %s. New balance %d.\n", args.User, b.accounts[args.User])
+
+	b.lockMgr.UnlockKeys(args.User)
+	*reply = true
+	return nil
+}
+
+func (b *Bank) Abort(args *TwoPCArgs, reply *bool) error {
+	fmt.Printf("[2PC] Aborted transaction for %s. \n", args.User)
+	b.lockMgr.UnlockKeys(args.User)
+	*reply = true
+	return nil
+}
+
 func main() {
 	//register gob types
 	gob.Register(TransferArgs{})
+	gob.Register(TwoPCArgs{})
 	//parse command line arguments
 	shardPtr := flag.Int("shard", 1, "Shard ID (1 or 2)")
 	portPtr := flag.String("port", "8001", "Port to listen on")
